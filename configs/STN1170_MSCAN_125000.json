@@ -1,0 +1,66 @@
+{
+  "serial": {
+    "baud": 115200,
+    "timeout": 1.0,
+    "bytesize": 8,
+    "parity": "N",
+    "stopbits": 1,
+    "xonxoff": false,
+    "rtscts": false,
+    "dsrdtr": false
+  },
+  "can": {
+    "protocol": 7,
+    "monitor_mode": 1,
+    "filter": null,
+    "extended_only": false,
+    "standard_only": true
+  },
+  "tcp": {
+    "host": "127.0.0.1",
+    "tcp_port": 23,
+    "backlog": 1,
+    "reuse_addr": true
+  },
+  "performance": {
+    "batch_size": 3,
+    "batch_timeout": 0.01,
+    "serial_delay": 0.005,
+    "tcp_timeout": 1.0
+  },
+  "flow_control": {
+    "test_flow_control": false,
+    "force_flow_control": null,
+    "disable_flow_control": false
+  },
+  "logging": {
+    "quiet": false,
+    "debug": false,
+    "log_file": null,
+    "timestamp_format": "elapsed"
+  },
+  "behavior": {
+    "exit_on_disconnect": false,
+    "restart_on_error": false,
+    "max_restarts": 5,
+    "graceful_shutdown": true
+  },
+  "advanced": {
+    "init_delay": 0.1,
+    "response_timeout": 5.0,
+    "custom_init": [],
+    "skip_init": false
+  },
+  "output": {
+    "format": "binary",
+    "output_file": null,
+    "file_only": false
+  },
+  "device": {
+    "chipset": "STN1170",
+    "bus_bitrate": 125000,
+    "can_bus_enabled": true,
+    "num_buses": 1
+  }
+}
+

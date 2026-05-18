@@ -49,7 +49,7 @@ def test_hscan_frame_parsing():
     print("=" * 60)
 
     for i, raw_frame in enumerate(test_frames, 1):
-        frame_id, data, is_extended, bus = savvycan_bridge.parse_elm_frame(raw_frame, default_protocol=6)
+        frame_id, data, is_extended, bus = savvycan_bridge.parse_elm_frame(raw_frame, default_protocol=31)
 
         require(frame_id is not None, f"Frame {i} parsed")
         assert frame_id is not None
@@ -92,7 +92,7 @@ def test_config_loading():
     config_path, config = load_hscan_config()
     print(f"\nLoaded config: {config_path}")
 
-    require(config["can"]["protocol"] == 6, "Protocol is 6 for 500 kbps 11-bit HS-CAN")
+    require(config["can"]["protocol"] == 31, "Protocol is 31 for raw 500 kbps 11-bit HS-CAN")
     require(config["device"]["bus_bitrate"] == 500000, "Bus bitrate is 500000")
     require(config["can"]["standard_only"] is True, "standard_only is enabled")
     require(config["can"]["extended_only"] is False, "extended_only is disabled")
@@ -116,7 +116,7 @@ def test_config_flattening():
 
     _, config = load_hscan_config()
     flat_config = savvycan_bridge.flatten_config(config)
-    require(flat_config.get("protocol") == 6, "Flattened config includes protocol")
+    require(flat_config.get("protocol") == 31, "Flattened config includes protocol")
     require(flat_config.get("bus_bitrate") == 500000, "Flattened config includes bus bitrate")
     require(flat_config.get("batch_timeout") == 0.005, "Flattened config includes batch timeout")
 
@@ -143,7 +143,7 @@ def test_mock_serial_communication():
             "extended_only": False,
             "standard_only": True,
             "output_format": "binary",
-            "protocol": 6,
+            "protocol": 31,
         },
     )
 

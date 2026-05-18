@@ -10,7 +10,7 @@
     "dsrdtr": false
   },
   "can": {
-    "protocol": 7,
+    "protocol": 51,
     "monitor_mode": 1,
     "filter": null,
     "extended_only": false,

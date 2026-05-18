@@ -40,8 +40,8 @@ python tests/test_hscan_config.py
 **Expected Output:**
 - All tests should pass with `[OK]` status
 - Shows parsed CAN frames in multiple formats
-- Validates MS-CAN specific settings (Protocol 7, 125 kHz, 11-bit IDs)
-- Validates HS-CAN specific settings (Protocol 6, 500 kHz, 11-bit IDs)
+- Validates MS-CAN specific settings (STN protocol 51, 125 kHz, 11-bit raw CAN)
+- Validates HS-CAN specific settings (STN protocol 31, 500 kHz, 11-bit raw CAN)
 - Demonstrates mock STN1170 communication
 - Confirms GVRET protocol compatibility
 

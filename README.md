@@ -52,13 +52,16 @@ To add a profile, drop a JSON file in [configs/](configs/) with `serial`, `can`,
 - **ELM327** — standard OBD-II CAN adapters
 - **STN1170** — adds flow control, ID filtering, and monitor modes
 
-The bridge starts monitoring with `STMA` (STN) and falls back to `ATMA` (ELM).
+The STN profiles use raw CAN presets (`STP 31` for HS-CAN, `STP 51` for MS-CAN)
+and start monitoring with `STM`, falling back to `STMA`/`ATMA` for adapters that
+do not support raw STN monitoring.
 
 ## Troubleshooting
 
 - **Port unavailable** — close other apps holding the port; run with `--list-ports` to confirm the device is present.
 - **Init failed** — try `--debug` to see the adapter's responses, or `--skip-init` if the adapter is already configured externally.
-- **No frames** — verify CAN-bus wiring and try `--debug` to inspect raw serial.
+- **No frames** — verify CAN-bus wiring, make sure the STN profile uses raw
+  `STP 31`/`STP 51` plus `STM`, and try `--debug` to inspect raw serial.
 - **Garbled data** — recheck `--baud` and flow control (`--test-flow-control` probes available modes).
 
 Use `--env-check` to print Python and `pyserial` versions.

@@ -58,7 +58,7 @@ def test_elm_parser():
         print(f"  Raw Input:  '{test_line}'")
 
         # Parse the frame
-        frame_id, data, is_extended, bus = savvycan_bridge.parse_elm_frame(test_line, default_protocol=7)
+        frame_id, data, is_extended, bus = savvycan_bridge.parse_elm_frame(test_line, default_protocol=51)
 
         require(frame_id is not None, f"Frame {i} parsed")
         assert frame_id is not None
@@ -103,7 +103,7 @@ def test_config_loading():
     config_path, config = load_mscan_config()
     print(f"\nLoaded config: {config_path}")
 
-    require(config["can"]["protocol"] == 7, "Protocol is 7 for 125 kbps 11-bit MS-CAN")
+    require(config["can"]["protocol"] == 51, "Protocol is 51 for raw 125 kbps 11-bit MS-CAN")
     require(config["device"]["bus_bitrate"] == 125000, "Bus bitrate is 125000")
     require(config["can"]["standard_only"] is True, "standard_only is enabled")
     require(config["can"]["extended_only"] is False, "extended_only is disabled")
@@ -120,15 +120,17 @@ def test_protocol_commands():
     print("  3. ATL 0           - Linefeeds off")
     print("  4. ATS 0           - Spaces off")
     print("  5. ATH 1           - Headers on (show CAN IDs)")
-    print("  6. ATCAF 0         - CAN Auto Formatting off")
-    print("  7. ATCFC0          - CAN Flow Control off")
-    print("  8. ATCSM 1         - Silent mode (monitor only)")
-    print("  9. STP 7           - Protocol 7 (ISO 15765-4, 11-bit, 125 kbaud) [KEY]")
-    print(" 10. STPTO 20        - Protocol timeout 20ms")
-    print(" 11. STCMM 1         - CAN Monitor Mode normal")
-    print(" 12. STMA            - Start monitoring")
-    print("\nKey Setting: STP 7 = ISO 15765-4 CAN (11-bit ID, 125 kbaud)")
-    print("This is the critical difference from HS-CAN (STP 6 = 500 kbaud)")
+    print("  6. ATD0            - DLC printing off")
+    print("  7. ATCAF0          - CAN Auto Formatting off")
+    print("  8. ATCFC0          - CAN Flow Control off")
+    print("  9. ATV1            - Variable DLC on")
+    print(" 10. STP 51          - Raw ISO 11898, 11-bit Tx, 125 kbaud [KEY]")
+    print(" 11. STPBR 125000    - Confirm protocol baud rate")
+    print(" 12. ATCF/ATCM 000   - CAN hardware pass-all filter")
+    print(" 13. STFPA 0000,0000 - STN pass-all filter")
+    print(" 14. STCMM 1         - CAN Monitor Mode normal")
+    print(" 15. STM             - Start raw CAN monitoring")
+    print("\nKey Setting: STP 51 + STM = raw 11-bit Ford MS-CAN at 125 kbaud")
 
 def test_mock_serial_communication():
     print("\n" + "=" * 60)
@@ -158,7 +160,7 @@ def test_mock_serial_communication():
             "extended_only": False,
             "standard_only": True,
             "output_format": "binary",
-            "protocol": 7,  # MS-CAN
+            "protocol": 51,  # Raw MS-CAN
         },
     )
 
@@ -211,7 +213,7 @@ def test_config_integration():
     flat_config = savvycan_bridge.flatten_config(config)
 
     # Check key settings are in flattened config
-    require(flat_config.get("protocol") == 7, "Protocol setting correctly flattened")
+    require(flat_config.get("protocol") == 51, "Protocol setting correctly flattened")
     require(flat_config.get("bus_bitrate") == 125000, "Bus bitrate setting correctly flattened")
 
 def test_script_execution():

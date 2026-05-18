@@ -57,6 +57,14 @@ runtime_config = {}
 GVRET_VERSION = 1
 GVRET_COMMAND_ID = 0xF1  # All GVRET frames begin with 0xF1
 
+# STN/OBDLink protocol presets used when parsing packed monitor output and
+# choosing the right monitor command. Legacy ELM protocol numbers are included
+# for compatibility with older adapters.
+STANDARD_ID_PROTOCOLS = {6, 8, 31, 33, 35, 51, 53, 61, 63}
+EXTENDED_ID_PROTOCOLS = {7, 9, 32, 34, 36, 52, 54, 62, 64}
+RAW_CAN_PROTOCOLS = {31, 32, 51, 52, 61, 62}
+SUPPORTED_CAN_PROTOCOLS = sorted(STANDARD_ID_PROTOCOLS | EXTENDED_ID_PROTOCOLS)
+
 shutdown_event = threading.Event()
 
 CONFIG_PROFILE_ALIASES = {
@@ -165,6 +173,20 @@ def flatten_config(cfg: dict) -> dict:
     return flat
 
 
+def is_extended_protocol(protocol: int) -> bool:
+    return int(protocol) in EXTENDED_ID_PROTOCOLS
+
+
+def is_raw_can_protocol(protocol: int) -> bool:
+    return int(protocol) in RAW_CAN_PROTOCOLS
+
+
+def _pass_all_filter_for_protocol(protocol: int):
+    if is_extended_protocol(protocol):
+        return b'ATCF00000000\r', b'ATCM00000000\r', b'STFPA 00000000,00000000\r'
+    return b'ATCF000\r', b'ATCM000\r', b'STFPA 0000,0000\r'
+
+
 def build_gvret_can_frame(frame_id, bus, data, is_extended=False):
     """
     Build a binary GVRET CAN frame for transmission to SavvyCAN.
@@ -241,7 +263,7 @@ def parse_elm_frame(line: str, default_protocol: int = 6):
 
     Args:
         line (str): Raw line from adapter serial output
-        default_protocol (int): CAN protocol number (6=11-bit, 33/34=29-bit)
+        default_protocol (int): CAN protocol number used to infer packed 11/29-bit IDs
 
     Returns:
         tuple: (frame_id, data_bytes, is_extended, bus) or (None, None, None, None) on error
@@ -262,18 +284,20 @@ def parse_elm_frame(line: str, default_protocol: int = 6):
         return (None, None, None, None)
 
     # Common noise/status
-    if s.startswith(('>', 'OK', '?')):
+    upper_s = s.upper()
+    if upper_s.startswith(('>', 'OK', '?')):
         return (None, None, None, None)
-    if s in ('NO DATA', 'STOPPED', 'SEARCHING', 'BUS BUSY', 'CAN ERROR', 'ERROR'):
+    if upper_s in ('NO DATA', 'STOPPED', 'SEARCHING', 'BUS BUSY', 'CAN ERROR', 'ERROR'):
         return (None, None, None, None)
 
     parts = s.split()
-    if parts and parts[0] in ('RX', 'TX'):
+    if parts and parts[0].rstrip(':').upper() in ('RX', 'TX'):
         s = ' '.join(parts[1:])
         parts = s.split()
 
-    # Guess header length by protocol (11 vs 29-bit)
-    is_ext_proto = default_protocol in (33, 34, 8, 9)
+    # Guess header length by protocol (11 vs 29-bit) for packed output.
+    # Spaced output can still reveal extension by header token length.
+    is_ext_proto = is_extended_protocol(default_protocol)
     header_len = 8 if is_ext_proto else 3
 
     header = ""
@@ -282,12 +306,14 @@ def parse_elm_frame(line: str, default_protocol: int = 6):
     if ' ' in s:
         # spaced form
         header = parts[0]
-        # If second token looks like decimal DLC (e.g., "8" or "07"),
-        # keep it only if purely decimal; hex letters mean it's part of payload.
+        # Treat the second token as decimal DLC only when the remaining token
+        # count matches it. Otherwise a first payload byte like "08" is data.
         data_tokens = parts[1:]
         if data_tokens and data_tokens[0].isdigit() and len(data_tokens[0]) <= 2:
-            # skip DLC token
-            data_tokens = data_tokens[1:]
+            possible_dlc = int(data_tokens[0], 10)
+            remaining_tokens = data_tokens[1:]
+            if possible_dlc <= 8 and len(remaining_tokens) == possible_dlc:
+                data_tokens = remaining_tokens
         data_hex = "".join(tok for tok in data_tokens)
     else:
         # packed hex
@@ -370,8 +396,13 @@ def serial_reader(ser: serial.Serial,
                 if ch in ('\r', '\n'):
                     line = buf.strip()
                     if line and not line.startswith(('>', 'OK')):
+                        logging.debug(f"ELM line: {line}")
                         fid, data, is_ext, bus = parse_elm_frame(line, protocol)
                         if fid is not None:
+                            logging.debug(
+                                "Parsed CAN frame id=%X ext=%s bus=%s data=%s",
+                                fid, is_ext, bus or 0, (data or b'').hex(" ")
+                            )
                             if extended_only and not is_ext:
                                 buf = ""
                                 continue
@@ -397,6 +428,8 @@ def serial_reader(ser: serial.Serial,
                                 for f in batch:
                                     out_queue.put(f)
                                 batch.clear()
+                        else:
+                            logging.debug(f"Ignored adapter line: {line}")
                     buf = ""
                 else:
                     buf += ch
@@ -547,11 +580,12 @@ def gvret_command_handler(client_socket: socket.socket, data: bytes, serial_queu
         hdr = f"{frame_id:08X}" if is_extended else f"{frame_id:03X}"
         # Bracket the TX with monitor stop/start so the adapter is willing
         # to transmit, then returns to passive capture.
+        monitor_command = runtime_config.get('_active_monitor_command', 'STMA')
         at_cmds = [
-            b'STMA 0\r',
+            b'\r',
             f"ATSH{hdr}\r".encode('ascii'),
             f"{payload.hex()}\r".encode('ascii'),
-            b'STMA\r',
+            f"{monitor_command}\r".encode('ascii'),
         ]
         serial_queue.put(at_cmds)
         return
@@ -659,12 +693,7 @@ def is_port_available(port: str, baud: int) -> bool:
 def clear_elm_buffers(ser: serial.Serial, timeout: float = 0.5):
     try:
         logging.info("Clearing adapter buffers...")
-        # Stop monitoring if on
-        try:
-            ser.write(b'STMA 0\r')
-            time.sleep(0.1)
-        except Exception:
-            pass
+        stop_monitoring(ser)
 
         old = ser.timeout
         ser.timeout = timeout
@@ -695,15 +724,34 @@ def initialize_elm_device(ser: serial.Serial, args) -> bool:
             b'ATL0\r',
             b'ATS0\r',
             b'ATH1\r',
+            b'ATD0\r',
             b'ATCAF0\r',
             b'ATCFC0\r',
+            b'ATV1\r',
             f'STP {args.protocol}\r'.encode('ascii'),
             b'STPTO 20\r',
         ]
 
+        bus_bitrate = getattr(args, 'bus_bitrate', None)
+        if bus_bitrate:
+            init_cmds += [f'STPBR {int(bus_bitrate)}\r'.encode('ascii')]
+
+        if is_raw_can_protocol(args.protocol):
+            hw_filter, hw_mask, pass_filter = _pass_all_filter_for_protocol(args.protocol)
+            init_cmds += [
+                b'STFAC\r',
+                b'STFFCC\r',
+                hw_filter,
+                hw_mask,
+                pass_filter,
+            ]
+
         # Filters
         if args.filter:
-            init_cmds += [b'STFPC\r', f'STFPA {args.filter}\r'.encode('ascii')]
+            init_cmds += [
+                b'STFPC\r',
+                f'STFPA {args.filter}\r'.encode('ascii'),
+            ]
 
         # STN monitor configuration if supported
         init_cmds += [f'STCMM {args.monitor_mode}\r'.encode('ascii')]
@@ -733,32 +781,49 @@ def initialize_elm_device(ser: serial.Serial, args) -> bool:
         return False
 
 
+def _selected_monitor_command(args) -> str:
+    configured = str(getattr(args, 'monitor_command', 'auto') or 'auto').upper()
+    if configured != 'AUTO':
+        return configured
+    return 'STM' if is_raw_can_protocol(args.protocol) else 'STMA'
+
+
+def _try_monitor_command(ser: serial.Serial, command: str) -> bool:
+    ser.write(f'{command}\r'.encode('ascii'))
+    rsp = _read_until_prompt(ser, b'>', 0.35)
+    upper_rsp = rsp.upper()
+    if b'?' in rsp or b'ERROR' in upper_rsp:
+        logging.debug(f"{command} monitor command rejected: {rsp.decode('ascii', errors='ignore').strip()}")
+        return False
+    runtime_config['_active_monitor_command'] = command
+    logging.info(f"Entered monitor mode ({command}).")
+    return True
+
+
 def start_monitoring(ser: serial.Serial, args) -> bool:
     """
-    Enter monitor mode: prefer STMA (STN), fallback to ATMA (ELM).
+    Enter monitor mode: prefer raw STM for STN raw CAN, fallback to STMA/ATMA.
     Consume trailing prompt.
     """
-    try:
-        ser.write(b'STMA\r')
-        logging.info("Entered monitor mode (STMA).")
-        _ = _read_until_prompt(ser, b'>', 1.0)
-        return True
-    except Exception:
-        pass
-    try:
-        ser.write(b'ATMA\r')
-        logging.info("Entered monitor mode (ATMA).")
-        _ = _read_until_prompt(ser, b'>', 1.0)
-        return True
-    except Exception as e:
-        logging.error(f"Failed to start monitoring: {e}")
-        return False
+    preferred = _selected_monitor_command(args)
+    fallbacks = ['STM', 'STMA', 'ATMA']
+    commands = [preferred] + [cmd for cmd in fallbacks if cmd != preferred]
+
+    for command in commands:
+        try:
+            if _try_monitor_command(ser, command):
+                return True
+        except Exception as e:
+            logging.debug(f"{command} monitor command failed: {e}")
+
+    logging.error("Failed to start monitoring.")
+    return False
 
 
 def stop_monitoring(ser: serial.Serial):
     try:
-        ser.write(b'STMA 0\r')
-        time.sleep(0.1)
+        ser.write(b'\r')
+        _ = _read_until_prompt(ser, b'>', 1.0)
     except Exception:
         try:
             ser.write(b'ATPC\r')
@@ -1147,10 +1212,13 @@ Examples:
     sg.add_argument('--dsrdtr', action='store_true', help="DSR/DTR")
 
     cg = p.add_argument_group('CAN')
-    cg.add_argument('--protocol', type=int, default=33, choices=[6, 7, 33, 34],
-                    help="6=HS-CAN 11-bit, 7=MS-CAN 11-bit, 33=29-bit, 34=both (default 33)")
+    cg.add_argument('--protocol', type=int, default=31, choices=SUPPORTED_CAN_PROTOCOLS,
+                    help="STN/ELM CAN protocol number (default 31 = raw 11-bit HS-CAN 500 kbps)")
     cg.add_argument('--monitor-mode', type=int, choices=[0, 1, 2], default=1,
                     help="STN monitor mode: 0=off, 1=normal, 2=extended")
+    cg.add_argument('--monitor-command', choices=['auto', 'STM', 'STMA', 'ATMA', 'stm', 'stma', 'atma'],
+                    default='auto',
+                    help="Monitor command to use: auto prefers STM for raw STN CAN")
     cg.add_argument('--filter', help="STN filter range (e.g., 7E0,7FF or 7E0-7FF)")
     cg.add_argument('--extended-only', action='store_true', help="Only capture extended frames")
     cg.add_argument('--standard-only', action='store_true', help="Only capture standard frames")
